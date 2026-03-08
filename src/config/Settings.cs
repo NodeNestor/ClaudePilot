@@ -18,6 +18,8 @@ namespace ClaudePilot
         public static float windowHeight = 600f;
         public static int maxHistoryMessages = 200;
         public static bool enableTelemetryHUD = true;
+        public static bool enableMcpServer = false;
+        public static int mcpPort = 8745;
 
         private static readonly string[] availableModels = new[]
         {
@@ -73,6 +75,8 @@ namespace ClaudePilot
             if (cfg.HasValue("apiProxyHost")) apiProxyHost = cfg.GetValue("apiProxyHost");
             if (cfg.HasValue("apiProxyPort")) int.TryParse(cfg.GetValue("apiProxyPort"), out apiProxyPort);
             if (cfg.HasValue("useProxy")) bool.TryParse(cfg.GetValue("useProxy"), out useProxy);
+            if (cfg.HasValue("enableMcpServer")) bool.TryParse(cfg.GetValue("enableMcpServer"), out enableMcpServer);
+            if (cfg.HasValue("mcpPort")) int.TryParse(cfg.GetValue("mcpPort"), out mcpPort);
             // Build URL from components (KSP ConfigNode mangles "://")
             if (useProxy && !string.IsNullOrEmpty(apiProxyHost))
                 apiBaseUrl = "http://" + apiProxyHost + ":" + apiProxyPort + "/v1/messages";
@@ -102,6 +106,8 @@ namespace ClaudePilot
             cfg.AddValue("apiProxyHost", apiProxyHost);
             cfg.AddValue("apiProxyPort", apiProxyPort);
             cfg.AddValue("useProxy", useProxy);
+            cfg.AddValue("enableMcpServer", enableMcpServer);
+            cfg.AddValue("mcpPort", mcpPort);
 
             root.Save(configPath);
             Debug.Log("[ClaudePilot] Settings saved.");
@@ -158,6 +164,13 @@ namespace ClaudePilot
             GUILayout.EndHorizontal();
 
             enableTelemetryHUD = GUILayout.Toggle(enableTelemetryHUD, "Show Telemetry HUD");
+
+            GUILayout.BeginHorizontal();
+            enableMcpServer = GUILayout.Toggle(enableMcpServer, "MCP Server:", GUILayout.Width(100));
+            string mcpPortStr = GUILayout.TextField(mcpPort.ToString(), GUILayout.Width(50));
+            int.TryParse(mcpPortStr, out mcpPort);
+            GUILayout.Label(enableMcpServer ? "localhost:" + mcpPort : "off", GUILayout.ExpandWidth(true));
+            GUILayout.EndHorizontal();
 
             if (GUILayout.Button("Save Settings"))
                 Save();

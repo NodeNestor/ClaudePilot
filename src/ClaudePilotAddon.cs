@@ -21,6 +21,7 @@ namespace ClaudePilot
         private MissionPlanner missionPlanner;
         private SceneController sceneController;
         private ScienceController scienceController;
+        private static McpServer mcpServer;
 
         private ApplicationLauncherButton toolbarButton;
         private bool toolbarButtonAdded = false;
@@ -120,6 +121,13 @@ namespace ClaudePilot
                 if (ApplicationLauncher.Ready)
                     OnGUIApplicationLauncherReady();
 
+                // Start MCP server if enabled
+                if (Settings.enableMcpServer && mcpServer == null)
+                {
+                    mcpServer = new McpServer(toolExecutor, Settings.mcpPort);
+                    mcpServer.Start();
+                }
+
                 // Resume conversation if we had a scene change
                 if (claudeClient != null)
                 {
@@ -190,6 +198,9 @@ namespace ClaudePilot
             {
                 if (claudeClient != null)
                     claudeClient.ProcessMainThreadQueue();
+
+                if (mcpServer != null && mcpServer.IsRunning)
+                    mcpServer.ProcessMainThread();
 
                 // Alt+P to toggle (Alt+C conflicts with KSP IVA view)
                 if (Input.GetKey(KeyCode.LeftAlt) && Input.GetKeyDown(KeyCode.P))
@@ -315,6 +326,12 @@ namespace ClaudePilot
 
         private void OnDestroy()
         {
+            if (mcpServer != null)
+            {
+                mcpServer.Stop();
+                mcpServer = null;
+            }
+
             Settings.Save();
             RemoveToolbarButton();
 

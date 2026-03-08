@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 
 namespace ClaudePilot
@@ -70,102 +71,276 @@ namespace ClaudePilot
         private MissionPlan activePlan;
         public MissionPlan ActivePlan => activePlan;
 
-        // Delta-V map: stock KSP values in m/s
-        // Format: from -> to -> delta-v needed (one way)
-        // These are approximate values for Hohmann transfers
-        private static readonly Dictionary<string, Dictionary<string, double[]>> deltaVMap = BuildDeltaVMap();
+        // ─── Dynamic Delta-V Calculations ───
+        // All values computed from FlightGlobals.Bodies so modded solar systems (RSS, OPM, etc.) work automatically.
 
-        private static Dictionary<string, Dictionary<string, double[]>> BuildDeltaVMap()
+        /// <summary>
+        /// Estimate delta-v to reach low orbit from the surface of a body.
+        /// Uses the rocket equation approximation: dv ≈ √(μ/r) * factor + drag losses.
+        /// </summary>
+        private static double EstimateLaunchDv(CelestialBody body)
         {
-            var map = new Dictionary<string, Dictionary<string, double[]>>();
+            double mu = body.gravParameter;
+            double r = body.Radius;
+            double orbitalV = Math.Sqrt(mu / (r + SafeLowOrbitAlt(body)));
+            double surfaceG = mu / (r * r);
+            double gravityLoss = surfaceG * 120; // ~120s of gravity loss
 
-            // [0] = delta-v to get there, [1] = delta-v to orbit/land there
-            // Values are approximate for stock KSP
+            double dragLoss = 0;
+            if (body.atmosphere)
+                dragLoss = body.atmosphereDepth * 0.6; // rough drag penalty
 
-            // From Kerbin surface
-            var kerbin = new Dictionary<string, double[]>();
-            kerbin["Kerbin_LKO"] = new double[] { 3400, 0 };        // 80km orbit
-            kerbin["Mun"] = new double[] { 3400 + 860, 310 + 580 };  // LKO + transfer + capture + land
-            kerbin["Minmus"] = new double[] { 3400 + 930, 160 + 180 }; // LKO + transfer + capture + land
-            kerbin["Duna"] = new double[] { 3400 + 1080, 250 + 360 }; // LKO + transfer + capture + land (aerobrake helps)
-            kerbin["Ike"] = new double[] { 3400 + 1080 + 30, 180 + 390 };
-            kerbin["Eve"] = new double[] { 3400 + 1033, 80 + 0 };    // Aerobrake to orbit, landing is free (atmo)
-            kerbin["Gilly"] = new double[] { 3400 + 1033 + 60, 30 + 30 };
-            kerbin["Jool"] = new double[] { 3400 + 1915, 0 };        // Aerobrake possible
-            kerbin["Laythe"] = new double[] { 3400 + 1915, 930 + 2900 }; // Atmo landing
-            kerbin["Vall"] = new double[] { 3400 + 1915 + 620, 910 + 860 };
-            kerbin["Tylo"] = new double[] { 3400 + 1915 + 400, 1100 + 2270 }; // Hardest landing
-            kerbin["Bop"] = new double[] { 3400 + 1915 + 220, 900 + 230 };
-            kerbin["Pol"] = new double[] { 3400 + 1915 + 160, 820 + 130 };
-            kerbin["Eeloo"] = new double[] { 3400 + 2100, 620 + 420 };
-            kerbin["Moho"] = new double[] { 3400 + 2520, 2410 + 870 };
-            kerbin["Dres"] = new double[] { 3400 + 1520, 340 + 430 };
-            map["Kerbin"] = kerbin;
-
-            // From LKO (80km Kerbin orbit)
-            var lko = new Dictionary<string, double[]>();
-            lko["Mun"] = new double[] { 860, 310 + 580 };
-            lko["Minmus"] = new double[] { 930, 160 + 180 };
-            lko["Duna"] = new double[] { 1080, 250 + 360 };
-            lko["Ike"] = new double[] { 1080, 180 + 30 + 390 };
-            lko["Eve"] = new double[] { 1033, 80 };
-            lko["Gilly"] = new double[] { 1033, 60 + 30 + 30 };
-            lko["Jool"] = new double[] { 1915, 160 };
-            lko["Laythe"] = new double[] { 1915, 930 + 2900 };
-            lko["Vall"] = new double[] { 1915, 620 + 910 + 860 };
-            lko["Tylo"] = new double[] { 1915, 400 + 1100 + 2270 };
-            lko["Bop"] = new double[] { 1915, 220 + 900 + 230 };
-            lko["Pol"] = new double[] { 1915, 160 + 820 + 130 };
-            lko["Eeloo"] = new double[] { 2100, 620 + 420 };
-            lko["Moho"] = new double[] { 2520, 2410 + 870 };
-            lko["Dres"] = new double[] { 1520, 340 + 430 };
-            map["Kerbin_LKO"] = lko;
-
-            // From Mun surface
-            var mun = new Dictionary<string, double[]>();
-            mun["Mun_Orbit"] = new double[] { 580, 0 };
-            mun["Kerbin"] = new double[] { 580 + 310, 0 }; // Aerobrake return
-            mun["Minmus"] = new double[] { 580 + 310 + 930, 160 + 180 };
-            map["Mun"] = mun;
-
-            // From Minmus surface
-            var minmus = new Dictionary<string, double[]>();
-            minmus["Minmus_Orbit"] = new double[] { 180, 0 };
-            minmus["Kerbin"] = new double[] { 180 + 160, 0 }; // Aerobrake return
-            map["Minmus"] = minmus;
-
-            // From Duna surface
-            var duna = new Dictionary<string, double[]>();
-            duna["Duna_Orbit"] = new double[] { 1450, 0 };
-            duna["Kerbin"] = new double[] { 1450 + 610, 0 }; // Aerobrake return
-            duna["Ike"] = new double[] { 1450 + 30, 180 + 390 };
-            map["Duna"] = duna;
-
-            return map;
+            return orbitalV + gravityLoss + dragLoss;
         }
 
-        // Get delta-v requirements for a mission
+        /// <summary>
+        /// Estimate delta-v to land from low orbit (reverse of launch minus aerobrake savings).
+        /// </summary>
+        private static double EstimateLandingDv(CelestialBody body)
+        {
+            if (body.atmosphere)
+                return 0; // Aerobraking handles it
+            double mu = body.gravParameter;
+            double r = body.Radius;
+            return Math.Sqrt(mu / (r + SafeLowOrbitAlt(body)));
+        }
+
+        /// <summary>
+        /// Hohmann transfer delta-v from circular orbit r1 to circular orbit r2 around the same parent.
+        /// Returns [ejection_dv, insertion_dv].
+        /// </summary>
+        private static double[] HohmannDv(double mu, double r1, double r2)
+        {
+            double a = (r1 + r2) / 2.0;
+            double v1 = Math.Sqrt(mu / r1);
+            double vt1 = Math.Sqrt(mu * (2.0 / r1 - 1.0 / a));
+            double v2 = Math.Sqrt(mu / r2);
+            double vt2 = Math.Sqrt(mu * (2.0 / r2 - 1.0 / a));
+            return new double[] { Math.Abs(vt1 - v1), Math.Abs(v2 - vt2) };
+        }
+
+        /// <summary>
+        /// Safe low orbit altitude: above atmosphere if present, otherwise ~10% of radius (min 10km).
+        /// </summary>
+        private static double SafeLowOrbitAlt(CelestialBody body)
+        {
+            if (body.atmosphere)
+                return body.atmosphereDepth + 10000;
+            return Math.Max(10000, body.Radius * 0.1);
+        }
+
+        /// <summary>
+        /// Find a body by name from FlightGlobals.Bodies.
+        /// </summary>
+        private static CelestialBody FindBody(string name)
+        {
+            if (FlightGlobals.Bodies == null) return null;
+            foreach (var b in FlightGlobals.Bodies)
+            {
+                if (string.Equals(b.name, name, StringComparison.OrdinalIgnoreCase))
+                    return b;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Find the "home" body (Kerbin in stock, Earth in RSS, etc.)
+        /// </summary>
+        private static CelestialBody GetHomeBody()
+        {
+            return FlightGlobals.GetHomeBody();
+        }
+
+        /// <summary>
+        /// Calculate transfer delta-v between two bodies dynamically.
+        /// Returns {transferDv, arrivalDv, launchDv (if from surface)}.
+        /// </summary>
+        private static double[] CalculateRouteDv(CelestialBody from, CelestialBody to, bool fromSurface)
+        {
+            double launchDv = 0;
+            if (fromSurface)
+                launchDv = EstimateLaunchDv(from);
+
+            double transferDv = 0;
+            double arrivalDv = 0;
+
+            // Same body — just orbit
+            if (from == to)
+                return new double[] { launchDv, 0, 0 };
+
+            // Moon of same planet (e.g., Mun -> Minmus)
+            if (from.orbit != null && to.orbit != null &&
+                from.orbit.referenceBody == to.orbit.referenceBody &&
+                from.orbit.referenceBody != null)
+            {
+                var parent = from.orbit.referenceBody;
+                double mu = parent.gravParameter;
+                double r1 = from.orbit.semiMajorAxis;
+                double r2 = to.orbit.semiMajorAxis;
+                var hoh = HohmannDv(mu, r1, r2);
+                transferDv = hoh[0];
+                arrivalDv = hoh[1] + EstimateLandingDv(to);
+                return new double[] { launchDv, transferDv, arrivalDv };
+            }
+
+            // Planet to own moon (e.g., Kerbin -> Mun)
+            if (to.orbit != null && to.orbit.referenceBody == from)
+            {
+                double mu = from.gravParameter;
+                double r1 = SafeLowOrbitAlt(from) + from.Radius;
+                double r2 = to.orbit.semiMajorAxis;
+                var hoh = HohmannDv(mu, r1, r2);
+                transferDv = hoh[0];
+                arrivalDv = hoh[1] + EstimateLandingDv(to);
+                return new double[] { launchDv, transferDv, arrivalDv };
+            }
+
+            // Moon back to parent planet (e.g., Mun -> Kerbin)
+            if (from.orbit != null && from.orbit.referenceBody != null &&
+                to == from.orbit.referenceBody)
+            {
+                double mu = to.gravParameter;
+                double r1 = from.orbit.semiMajorAxis;
+                double r2 = SafeLowOrbitAlt(to) + to.Radius;
+                var hoh = HohmannDv(mu, r1, r2);
+                transferDv = hoh[0];
+                arrivalDv = to.atmosphere ? 0 : hoh[1]; // Aerobrake if atmosphere
+                return new double[] { launchDv, transferDv, arrivalDv };
+            }
+
+            // Interplanetary: both orbit the same star
+            CelestialBody fromParent = from.orbit != null ? from.orbit.referenceBody : null;
+            CelestialBody toParent = to.orbit != null ? to.orbit.referenceBody : null;
+
+            // If from is a moon, use its planet for the interplanetary leg
+            CelestialBody fromPlanet = from;
+            double ejectionExtra = 0;
+            if (fromParent != null && fromParent.orbit != null && fromParent.orbit.referenceBody != null)
+            {
+                // from is a moon — eject from moon first
+                fromPlanet = fromParent;
+            }
+
+            // If to is a moon, target its planet first
+            CelestialBody toPlanet = to;
+            if (toParent != null && toParent.orbit != null && toParent.orbit.referenceBody != null &&
+                toParent != fromPlanet.orbit?.referenceBody)
+            {
+                toPlanet = toParent;
+            }
+
+            // Get the star (common parent)
+            CelestialBody star = null;
+            if (fromPlanet.orbit != null)
+            {
+                star = fromPlanet.orbit.referenceBody;
+                if (star != null && star.orbit != null && star.orbit.referenceBody != null)
+                    star = star.orbit.referenceBody; // go up if needed
+            }
+
+            if (star != null && fromPlanet.orbit != null && toPlanet.orbit != null &&
+                fromPlanet.orbit.referenceBody == star && toPlanet.orbit.referenceBody == star)
+            {
+                // Interplanetary Hohmann
+                double mu = star.gravParameter;
+                double r1 = fromPlanet.orbit.semiMajorAxis;
+                double r2 = toPlanet.orbit.semiMajorAxis;
+                var hoh = HohmannDv(mu, r1, r2);
+
+                // Ejection from from-planet's SOI
+                if (fromPlanet.gravParameter > 0)
+                {
+                    double parkingR = SafeLowOrbitAlt(fromPlanet) + fromPlanet.Radius;
+                    double vInf = hoh[0];
+                    double vPark = Math.Sqrt(fromPlanet.gravParameter / parkingR);
+                    double vEject = Math.Sqrt(vInf * vInf + 2 * fromPlanet.gravParameter / parkingR);
+                    transferDv = vEject - vPark;
+                }
+                else
+                {
+                    transferDv = hoh[0];
+                }
+
+                // Insertion at target planet
+                if (toPlanet.gravParameter > 0)
+                {
+                    double captureR = SafeLowOrbitAlt(toPlanet) + toPlanet.Radius;
+                    double vInf = hoh[1];
+                    double vCapture = Math.Sqrt(vInf * vInf + 2 * toPlanet.gravParameter / captureR);
+                    double vOrbit = Math.Sqrt(toPlanet.gravParameter / captureR);
+                    arrivalDv = vCapture - vOrbit;
+                    if (toPlanet.atmosphere)
+                        arrivalDv = 0; // Can aerobrake
+                }
+                else
+                {
+                    arrivalDv = hoh[1];
+                }
+
+                // If target is a moon of the target planet, add moon insertion
+                if (to != toPlanet)
+                {
+                    arrivalDv += EstimateLandingDv(to);
+                    if (to.orbit != null)
+                    {
+                        double moonMu = toPlanet.gravParameter;
+                        double moonR = to.orbit.semiMajorAxis;
+                        double captureR = SafeLowOrbitAlt(toPlanet) + toPlanet.Radius;
+                        var moonHoh = HohmannDv(moonMu, captureR, moonR);
+                        arrivalDv += moonHoh[0] + moonHoh[1];
+                    }
+                }
+                else
+                {
+                    arrivalDv += EstimateLandingDv(to);
+                }
+
+                return new double[] { launchDv, transferDv, arrivalDv };
+            }
+
+            // Fallback: can't compute
+            return null;
+        }
+
+        // Get delta-v requirements for a specific route (dynamically calculated)
         public string GetDeltaVMap(string from, string to)
         {
             try
             {
-                if (deltaVMap.ContainsKey(from) && deltaVMap[from].ContainsKey(to))
+                if (FlightGlobals.Bodies == null || FlightGlobals.Bodies.Count == 0)
+                    return "{\"error\":\"FlightGlobals.Bodies not available yet\"}";
+
+                CelestialBody fromBody = FindBody(from);
+                CelestialBody toBody = FindBody(to);
+
+                // Handle "LKO" / "_LKO" suffix as low orbit of the body
+                bool fromLKO = from.EndsWith("_LKO", StringComparison.OrdinalIgnoreCase);
+                if (fromLKO)
                 {
-                    var dv = deltaVMap[from][to];
-                    double total = dv[0] + dv[1];
-                    return "{\"from\":\"" + EscapeJson(from) + "\""
-                        + ",\"to\":\"" + EscapeJson(to) + "\""
-                        + ",\"transferDeltaV\":" + dv[0]
-                        + ",\"arrivalDeltaV\":" + dv[1]
-                        + ",\"totalOneWay\":" + total
-                        + ",\"totalRoundTrip\":" + (total * 2)
-                        + ",\"note\":\"Approximate values. Aerobraking can save significant dv at bodies with atmospheres.\""
-                        + "}";
+                    string bodyName = from.Substring(0, from.Length - 4);
+                    fromBody = FindBody(bodyName);
                 }
 
-                // Try to find any route
-                return "{\"error\":\"No delta-v data for route " + EscapeJson(from) + " -> " + EscapeJson(to) + "\""
-                    + ",\"available_origins\":[" + GetAvailableOrigins() + "]"
+                if (fromBody == null)
+                    return "{\"error\":\"Unknown body: " + EscapeJson(from) + "\",\"available\":[" + GetAllBodyNames() + "]}";
+                if (toBody == null)
+                    return "{\"error\":\"Unknown body: " + EscapeJson(to) + "\",\"available\":[" + GetAllBodyNames() + "]}";
+
+                var dv = CalculateRouteDv(fromBody, toBody, !fromLKO);
+                if (dv == null)
+                    return "{\"error\":\"Cannot compute route from " + EscapeJson(from) + " to " + EscapeJson(to) + "\"}";
+
+                double total = dv[0] + dv[1] + dv[2];
+                return "{\"from\":\"" + EscapeJson(from) + "\""
+                    + ",\"to\":\"" + EscapeJson(toBody.name) + "\""
+                    + ",\"launchDeltaV\":" + Math.Round(dv[0]).ToString(CultureInfo.InvariantCulture)
+                    + ",\"transferDeltaV\":" + Math.Round(dv[1]).ToString(CultureInfo.InvariantCulture)
+                    + ",\"arrivalDeltaV\":" + Math.Round(dv[2]).ToString(CultureInfo.InvariantCulture)
+                    + ",\"totalOneWay\":" + Math.Round(total).ToString(CultureInfo.InvariantCulture)
+                    + ",\"totalRoundTrip\":" + Math.Round(total * 2).ToString(CultureInfo.InvariantCulture)
+                    + ",\"toHasAtmosphere\":" + (toBody.atmosphere ? "true" : "false")
+                    + ",\"note\":\"Dynamically calculated from game data. Aerobraking can save significant dv at bodies with atmospheres.\""
+                    + ",\"source\":\"dynamic\""
                     + "}";
             }
             catch (Exception ex)
@@ -174,30 +349,71 @@ namespace ClaudePilot
             }
         }
 
-        // Get full delta-v map as JSON
+        // Get full delta-v map for ALL bodies in the current solar system (dynamic)
         public string GetFullDeltaVMap()
         {
             try
             {
-                string json = "{";
-                bool firstOrigin = true;
-                foreach (var origin in deltaVMap)
-                {
-                    if (!firstOrigin) json += ",";
-                    firstOrigin = false;
-                    json += "\"" + EscapeJson(origin.Key) + "\":{";
+                if (FlightGlobals.Bodies == null || FlightGlobals.Bodies.Count == 0)
+                    return "{\"error\":\"FlightGlobals.Bodies not available yet\"}";
 
-                    bool firstDest = true;
-                    foreach (var dest in origin.Value)
-                    {
-                        if (!firstDest) json += ",";
-                        firstDest = false;
-                        json += "\"" + EscapeJson(dest.Key) + "\":{\"transfer\":" + dest.Value[0]
-                            + ",\"arrival\":" + dest.Value[1]
-                            + ",\"total\":" + (dest.Value[0] + dest.Value[1]) + "}";
-                    }
+                CelestialBody home = GetHomeBody();
+                if (home == null)
+                    return "{\"error\":\"Cannot find home body\"}";
+
+                string json = "{\"solarSystem\":\"" + EscapeJson(FlightGlobals.Bodies[0].name) + "\"";
+                json += ",\"homeBody\":\"" + EscapeJson(home.name) + "\"";
+                json += ",\"bodies\":{";
+
+                bool firstBody = true;
+                foreach (var body in FlightGlobals.Bodies)
+                {
+                    if (body == FlightGlobals.Bodies[0]) continue; // Skip the star itself
+
+                    if (!firstBody) json += ",";
+                    firstBody = false;
+
+                    json += "\"" + EscapeJson(body.name) + "\":{";
+                    json += "\"radius\":" + Math.Round(body.Radius).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"gravity\":" + Math.Round(body.GeeASL, 3).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"atmosphere\":" + (body.atmosphere ? "true" : "false");
+                    if (body.atmosphere)
+                        json += ",\"atmoHeight\":" + Math.Round(body.atmosphereDepth).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"lowOrbitAlt\":" + Math.Round(SafeLowOrbitAlt(body)).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"launchToOrbit\":" + Math.Round(EstimateLaunchDv(body)).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"landingDv\":" + Math.Round(EstimateLandingDv(body)).ToString(CultureInfo.InvariantCulture);
+
+                    if (body.orbit != null && body.orbit.referenceBody != null)
+                        json += ",\"parent\":\"" + EscapeJson(body.orbit.referenceBody.name) + "\"";
+
                     json += "}";
                 }
+
+                json += "}";
+
+                // Add routes from home body
+                json += ",\"fromHome\":{";
+                bool firstRoute = true;
+                foreach (var body in FlightGlobals.Bodies)
+                {
+                    if (body == home || body == FlightGlobals.Bodies[0]) continue;
+
+                    var dv = CalculateRouteDv(home, body, true);
+                    if (dv == null) continue;
+
+                    if (!firstRoute) json += ",";
+                    firstRoute = false;
+
+                    double total = dv[0] + dv[1] + dv[2];
+                    json += "\"" + EscapeJson(body.name) + "\":{";
+                    json += "\"launch\":" + Math.Round(dv[0]).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"transfer\":" + Math.Round(dv[1]).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"arrival\":" + Math.Round(dv[2]).ToString(CultureInfo.InvariantCulture);
+                    json += ",\"total\":" + Math.Round(total).ToString(CultureInfo.InvariantCulture);
+                    json += "}";
+                }
+                json += "}";
+
                 json += "}";
                 return json;
             }
@@ -347,16 +563,21 @@ namespace ClaudePilot
                 var steps = new List<string>();
                 double totalDv = 0;
 
-                // Get delta-v data
-                double launchDv = 3400;
+                CelestialBody home = GetHomeBody();
+                CelestialBody dest = FindBody(destination);
+
+                double launchDv = home != null ? EstimateLaunchDv(home) : 3400;
                 double transferDv = 0;
                 double arrivalDv = 0;
 
-                if (deltaVMap.ContainsKey("Kerbin_LKO") && deltaVMap["Kerbin_LKO"].ContainsKey(destination))
+                if (home != null && dest != null)
                 {
-                    var dv = deltaVMap["Kerbin_LKO"][destination];
-                    transferDv = dv[0];
-                    arrivalDv = dv[1];
+                    var dv = CalculateRouteDv(home, dest, false);
+                    if (dv != null)
+                    {
+                        transferDv = dv[1];
+                        arrivalDv = dv[2];
+                    }
                 }
 
                 // Build suggested steps
@@ -368,7 +589,7 @@ namespace ClaudePilot
                 totalDv += transferDv;
 
                 // Check if destination has atmosphere (for aerobrake)
-                bool hasAtmo = destination == "Eve" || destination == "Duna" || destination == "Laythe" || destination == "Jool" || destination == "Kerbin";
+                bool hasAtmo = dest != null && dest.atmosphere;
 
                 if (hasAtmo && arrivalDv > 500)
                 {
@@ -537,15 +758,16 @@ namespace ClaudePilot
             }
         }
 
-        private string GetAvailableOrigins()
+        private string GetAllBodyNames()
         {
+            if (FlightGlobals.Bodies == null) return "";
             string result = "";
             bool first = true;
-            foreach (var key in deltaVMap.Keys)
+            foreach (var body in FlightGlobals.Bodies)
             {
                 if (!first) result += ",";
                 first = false;
-                result += "\"" + EscapeJson(key) + "\"";
+                result += "\"" + EscapeJson(body.name) + "\"";
             }
             return result;
         }
