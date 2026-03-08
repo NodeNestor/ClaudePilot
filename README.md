@@ -2,6 +2,44 @@
 
 ClaudePilot adds a fully autonomous AI copilot to KSP. Chat with Claude in-game to fly missions, design rockets, do science, manage your career, and explore the Kerbol system — all through natural language.
 
+## Quick Install
+
+1. Download `ClaudePilot.zip` from [Releases](https://github.com/NodeNestor/ClaudePilot/releases)
+2. Extract into your KSP `GameData/` folder:
+   ```
+   KSP/GameData/ClaudePilot/
+   ├── ClaudePilot.dll
+   └── config.cfg
+   ```
+3. Launch KSP, press **Alt+P** or click the toolbar button
+4. Enter your API key in settings
+5. Start chatting — "launch to 80km orbit", "fly me to the Mun"
+
+## Configuration
+
+Edit `GameData/ClaudePilot/config.cfg` or use the in-game settings panel:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `apiKey` | (empty) | API key for your LLM endpoint |
+| `useProxy` | `true` | Route API calls through a local proxy |
+| `apiProxyHost` | `127.0.0.1` | Proxy host address |
+| `apiProxyPort` | `5588` | Proxy port |
+| `model` | `claude-sonnet-4-6` | Model name (Haiku/Sonnet/Opus selector in-game) |
+| `keybind` | `LeftAlt+C` | Toggle chat window |
+| `maxHistoryMessages` | `200` | Conversation history length |
+| `enableTelemetryHUD` | `true` | Show telemetry overlay |
+| `enableMcpServer` | `false` | Enable the MCP server for external agents |
+| `mcpPort` | `8745` | MCP server port |
+
+### API Setup
+
+ClaudePilot talks to any **OpenAI-compatible API** endpoint. You can use:
+
+- **Claude via proxy** — e.g. [rolling-context proxy](https://github.com/NodeNestor/claude-rolling-context) on `127.0.0.1:5588`
+- **Direct Anthropic API** — set up any OpenAI-compatible wrapper
+- **Local LLMs** — Ollama, vLLM, llama.cpp server, etc.
+
 ## Features
 
 ### Flight & Navigation
@@ -26,7 +64,7 @@ ClaudePilot adds a fully autonomous AI copilot to KSP. Chat with Claude in-game 
 - **Craft Modification** — Swap, add, or remove parts with automatic backups
 
 ### Mission Planning
-- **Delta-V Maps** — Full Kerbol system delta-v reference
+- **Dynamic Delta-V Maps** — Computed from actual game data, works with **any solar system** (stock, RSS, OPM, Kopernicus planet packs)
 - **Mission Suggestions** — Auto-generate step-by-step plans for any destination
 - **Mission Tracking** — Create plans, track progress, auto-execute sequences
 - **Scene Switching** — Move between VAB, SPH, Tracking Station, and Flight
@@ -34,38 +72,86 @@ ClaudePilot adds a fully autonomous AI copilot to KSP. Chat with Claude in-game 
 ### Aircraft
 - **Kramax Autopilot** — Set heading, altitude, speed, cruise to coordinates, autoland
 
+## MCP Server (External Agent Control)
+
+ClaudePilot includes an optional **MCP (Model Context Protocol) server** that exposes all 80+ tools over HTTP. This lets external AI agents (Claude Code, custom scripts, other LLMs) control KSP remotely.
+
+### Enabling
+
+Toggle "MCP Server" in the in-game settings panel, or set in `config.cfg`:
+```
+enableMcpServer = True
+mcpPort = 8745
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Health check — returns server info and available tools |
+| `GET` | `/mcp` | SSE endpoint — MCP protocol connection (sends `endpoint` event) |
+| `POST` | `/mcp` | JSON-RPC endpoint — MCP protocol messages |
+| `GET` | `/tools` | List all available tools (OpenAI format) |
+| `POST` | `/tool` | Execute a tool (legacy REST, simpler integration) |
+
+### MCP Protocol (JSON-RPC)
+
+Standard MCP methods supported:
+
+```json
+// Initialize
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+
+// List tools
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+
+// Call a tool
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+  "name":"get_vessel_telemetry",
+  "arguments":{}
+}}
+```
+
+### Legacy REST API
+
+For simpler integration (curl, scripts, etc.):
+
+```bash
+# List tools
+curl http://localhost:8745/tools
+
+# Call a tool
+curl -X POST http://localhost:8745/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"get_vessel_telemetry","arguments":{}}'
+
+# Launch to orbit
+curl -X POST http://localhost:8745/tool \
+  -d '{"name":"launch_to_orbit","arguments":{"altitude":"80000"}}'
+```
+
+### Using with Claude Code
+
+Add ClaudePilot as an MCP server in your Claude Code config:
+
+```json
+{
+  "mcpServers": {
+    "ksp": {
+      "url": "http://localhost:8745/mcp"
+    }
+  }
+}
+```
+
+Then Claude Code can directly control your KSP game — "launch the rocket", "warp to the Mun", etc.
+
 ## Requirements
 
 - **KSP 1.12.x**
 - **MechJeb2** (optional — required for autopilot features like ascent/landing)
 - **KramaxAutoPilot** (optional — required for aircraft autopilot)
 - An **OpenAI-compatible API endpoint** (Claude, local LLM, etc.)
-
-## Installation
-
-1. Build the DLL (see Building) or grab from Releases
-2. Copy `GameData/ClaudePilot/` to your KSP `GameData/`:
-   ```
-   KSP/GameData/ClaudePilot/
-   ├── ClaudePilot.dll
-   └── config.cfg
-   ```
-3. Launch KSP, enter any scene
-4. Press **Alt+P** or click the toolbar button
-5. Enter your API key/endpoint in settings
-
-## Configuration
-
-Edit `GameData/ClaudePilot/config.cfg` or use the in-game settings:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `apiKey` | (empty) | API key for your LLM endpoint |
-| `apiBaseUrl` | `http://127.0.0.1:9212` | API base URL (OpenAI-compatible) |
-| `model` | `claude-sonnet-4-6` | Model name |
-| `keybind` | `LeftAlt+C` | Toggle chat window |
-| `maxHistoryMessages` | `20` | Conversation history length |
-| `enableTelemetryHUD` | `true` | Show telemetry overlay |
 
 ## Usage Examples
 
@@ -113,13 +199,12 @@ Edit `GameData/ClaudePilot/config.cfg` or use the in-game settings:
 
 ## Building from Source
 
-1. Install Visual Studio or `dotnet` CLI with .NET Framework 4.7.2
-2. Set `KSPDir` environment variable to your KSP install, or edit reference paths in `ClaudePilot.csproj`
-3. Build:
+1. Install `dotnet` CLI with .NET Framework 4.7.2 targeting pack
+2. Set `KSPDir` to your KSP managed DLLs folder:
+   ```bash
+   dotnet build ClaudePilot.csproj -c Release -p:KSPDir="/path/to/KSP/KSP_x64_Data/Managed"
    ```
-   dotnet build ClaudePilot.csproj
-   ```
-4. Copy `bin/Debug/ClaudePilot.dll` to `GameData/ClaudePilot/`
+3. Copy `bin/Release/ClaudePilot.dll` to `GameData/ClaudePilot/`
 
 ## Architecture
 
@@ -139,12 +224,14 @@ src/
 │   ├── FlightController.cs      # Warp, staging, SAS, maneuver nodes, auto-transfer
 │   ├── TransferCalculator.cs    # Hohmann transfer math (phase angles, timing)
 │   ├── CraftFileManager.cs      # Part browser, craft files, craft creation
-│   ├── MissionPlanner.cs        # Delta-v maps, mission plans, step execution
+│   ├── MissionPlanner.cs        # Dynamic delta-v maps, mission plans, step execution
 │   ├── SceneController.cs       # Scene switching, quick launch, recovery
 │   ├── ScienceController.cs     # Science, tech tree, contracts, crew, EVA
 │   └── KramaxBridge.cs          # KramaxAutoPilot aircraft integration
-└── config/
-    └── Settings.cs              # Configuration management
+├── config/
+│   └── Settings.cs              # Configuration management
+└── mcp/
+    └── McpServer.cs             # MCP server (JSON-RPC over HTTP + SSE)
 ```
 
 ## How It Works
@@ -154,6 +241,8 @@ src/
 - Conversation persists across **scene changes** (VAB -> Flight -> back)
 - **Blocking tools** (`_wait` variants) poll MechJeb status until autopilot completes
 - **Autopilot monitoring** detects when MechJeb finishes and auto-notifies Claude
+- **Delta-v maps** calculated dynamically from `FlightGlobals.Bodies` — works with any planet pack
+- **MCP server** marshals HTTP requests to Unity's main thread for safe tool execution
 
 ## License
 

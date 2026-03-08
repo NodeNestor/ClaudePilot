@@ -214,7 +214,6 @@ namespace ClaudePilot
 
             // If from is a moon, use its planet for the interplanetary leg
             CelestialBody fromPlanet = from;
-            double ejectionExtra = 0;
             if (fromParent != null && fromParent.orbit != null && fromParent.orbit.referenceBody != null)
             {
                 // from is a moon — eject from moon first

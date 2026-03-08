@@ -115,7 +115,7 @@ namespace ClaudePilot
                             bool hasData = sciExp.GetData().Length > 0;
                             bool canRun = !sciExp.Inoperable;
                             bool isRerunnable = sciExp.rerunnable;
-                            float dataScale = sciExp.dataScale;
+                            float dataScale = sciExp.xmitDataScalar;
 
                             // Check what science value this would give
                             string biome = GetCurrentBiome(vessel);
@@ -430,7 +430,7 @@ namespace ClaudePilot
                 float totalValue = 0;
                 foreach (var data in allData)
                 {
-                    totalValue += data.dataAmount * data.transmitValue;
+                    totalValue += data.dataAmount;
                 }
 
                 transmitter.TransmitData(allData);
@@ -503,10 +503,10 @@ namespace ClaudePilot
                     }
                     techParts[tid].Add(ap.title ?? ap.name);
 
-                    // Try to get cost from config
+                    // Try to get cost from part entry cost
                     try
                     {
-                        float cost = ap.TechHiddenCost;
+                        float cost = ap.entryCost;
                         if (cost > techCosts[tid]) techCosts[tid] = cost;
                     }
                     catch { }
@@ -931,7 +931,7 @@ namespace ClaudePilot
                 if (crewPart == null)
                     return ErrorJson("Could not find crew member's part.");
 
-                FlightEVA.SpawnEVA(kerbal, crewPart, crewPart.airlock ?? crewPart.transform);
+                FlightEVA.fetch.spawnEVA(kerbal, crewPart, crewPart.airlock ?? crewPart.transform);
 
                 return SuccessJson("\"action\":\"go_eva\""
                     + ",\"kerbal\":\"" + EscapeJson(kerbal.name) + "\""
