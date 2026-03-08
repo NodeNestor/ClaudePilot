@@ -1,0 +1,12 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.DotSettings
+*.DotSettings.user
+*.nupkg
+packages/
+*.pdb
+*.mdb
+TestResults/
